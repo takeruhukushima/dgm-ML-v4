@@ -1,27 +1,30 @@
 llm:
   provider_name: "gemini"
-  model_name: "gemini-1.5-pro"  # または "gemini-1.0-pro" など、使用するモデルに応じて変更
+  model_name: "gemini-2.5-pro-preview-05-06"  # Updated model
   temperature_suggestion: 0.7
-  temperature_code_gen: 0.3
+  temperature_code_gen: 0.2  # Lower temperature for more focused code generation
+  generation_config:
+    top_p: 0.95
+    top_k: 40
+    max_output_tokens: 2048
   max_retries: 3
-  retry_delay: 5
-  timeout: 60  # Geminiは応答に時間がかかることがあるためタイムアウトを延長
-  safety_settings:  # Geminiのセーフティ設定
+  retry_delay: 10
+  timeout: 30
+  safety_settings:
     - category: "HARM_CATEGORY_HARASSMENT"
-      threshold: "BLOCK_NONE"
+      threshold: "BLOCK_ONLY_HIGH"
     - category: "HARM_CATEGORY_HATE_SPEECH"
-      threshold: "BLOCK_NONE"
+      threshold: "BLOCK_ONLY_HIGH"
     - category: "HARM_CATEGORY_SEXUALLY_EXPLICIT"
-      threshold: "BLOCK_NONE"
+      threshold: "BLOCK_ONLY_HIGH"
     - category: "HARM_CATEGORY_DANGEROUS_CONTENT"
-      threshold: "BLOCK_NONE"
+      threshold: "BLOCK_ONLY_HIGH"
 
 evolution:
-  max_iterations: 50
-  parent_selection_strategy: "elite_plus_diversity"
-  diversity_weight: 0.3
-  mutation_rate: 0.8
-  population_size: 10
+  generations: 10
+  population_size: 3
+  mutation_rate: 0.2
+  crossover_rate: 0.8
 
 evaluation:
   cross_validation_folds: 5
@@ -40,4 +43,16 @@ archive:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  output_dir: "logs"
+
+pipeline:
+  test_size: 0.2
+  random_state: 42
+  validation_method: "holdout"
+  metrics:
+    - "accuracy"
+    - "f1_score"
+    - "roc_auc"
+
+output:
+  base_dir: "output"
+  log_level: "INFO"

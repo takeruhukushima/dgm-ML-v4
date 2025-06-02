@@ -11,7 +11,7 @@ from .templates import generate_initial_pipeline
 
 __all__ = [
     'MachineLearningPipelineAgent',
-    'PipelineArchive', 
+    'PipelineArchive',
     'DGMEvolution',
     'generate_initial_pipeline'
 ]

@@ -5,11 +5,14 @@
 
 import os
 import json
+import shutil
 from datetime import datetime
-from typing import Dict, Any, List, Optional
 from pathlib import Path
-import numpy as np
-from .agent import MachineLearningPipelineAgent
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
+import pandas as pd
+
+if TYPE_CHECKING:
+    from .agent import MachineLearningPipelineAgent
 
 
 class PipelineArchive:
@@ -53,7 +56,7 @@ class PipelineArchive:
         with open(self.metadata_file, 'w', encoding='utf-8') as f:
             json.dump(self.metadata, f, indent=2, ensure_ascii=False)
     
-    def add_agent(self, agent: MachineLearningPipelineAgent, performance: Dict[str, float]) -> bool:
+    def add_agent(self, agent: 'MachineLearningPipelineAgent', performance: Dict[str, float]) -> bool:
         """新しいエージェントをアーカイブに追加します。
         
         Args:
@@ -107,7 +110,7 @@ class PipelineArchive:
         self._save_metadata()
         return True
     
-    def _is_worthy_of_archive(self, agent: MachineLearningPipelineAgent, 
+    def _is_worthy_of_archive(self, agent: 'MachineLearningPipelineAgent', 
                             performance: Dict[str, float]) -> bool:
         """エージェントがアーカイブに追加する価値があるかどうかを判定します。
         
@@ -183,7 +186,7 @@ class PipelineArchive:
             'timestamp': str(datetime.now())
         })
     
-    def _update_diversity_metrics(self, agent: MachineLearningPipelineAgent) -> None:
+    def _update_diversity_metrics(self, agent: 'MachineLearningPipelineAgent') -> None:
         """多様性メトリクスを更新します。
         
         Args:
@@ -286,7 +289,7 @@ class PipelineArchive:
             # デフォルトではパフォーマンスでソート
             return self.get_best_agents(n)
     
-    def load_agent(self, agent_id: str) -> Optional[MachineLearningPipelineAgent]:
+    def load_agent(self, agent_id: str) -> Optional['MachineLearningPipelineAgent']:
         """指定されたIDのエージェントをファイルから読み込みます。
         
         Args:
@@ -359,3 +362,34 @@ class PipelineArchive:
                 ]) if self.metadata.get('diversity_metrics') else 0
             }
         }
+    
+    def save_predictions(self, agent_id: str, predictions: pd.Series, timestamp: Optional[str] = None) -> None:
+        """予測結果を保存
+
+        Args:
+            agent_id (str): エージェントID
+            predictions (pd.Series): 予測結果
+            timestamp (str, optional): タイムスタンプ
+        """
+        predictions_dir = self.archive_dir / 'predictions'
+        predictions_dir.mkdir(exist_ok=True)
+        
+        # ファイル名の生成
+        timestamp = timestamp or pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{agent_id}_{timestamp}_predictions.csv"
+        
+        # 予測結果の保存
+        predictions.to_csv(predictions_dir / filename)
+        
+        # メタデータの更新
+        if not hasattr(self, 'predictions_metadata'):
+            self.predictions_metadata = {}
+            
+        self.predictions_metadata[agent_id] = {
+            'latest_prediction_file': filename,
+            'timestamp': timestamp,
+            'num_predictions': len(predictions)
+        }
+        
+        # メタデータをJSONに保存
+        self._save_metadata()

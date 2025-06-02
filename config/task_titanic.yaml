@@ -24,3 +24,10 @@ task:
     - "scale_numerical"
     - "create_title_feature"
     - "create_family_size"
+
+archive:
+  save_predictions: true
+  predictions_format: "csv"
+  predictions_dir: "predictions"
+  keep_history: true
+  max_predictions_per_agent: 5

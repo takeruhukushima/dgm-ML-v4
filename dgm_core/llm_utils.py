@@ -47,27 +47,105 @@ except Exception as e:
     print(f"Error initializing Gemini API: {e}")
     raise
 
-def setup_llm():
-    """Initialize the LLM configuration"""
+def setup_llm(global_config: dict = None) -> 'google.generativeai.GenerativeModel':
+    """LLMの設定を初期化する
+
+    Args:
+        global_config (dict, optional): グローバル設定. Defaults to None.
+
+    Returns:
+        google.generativeai.GenerativeModel: 初期化されたモデル
+    """
     try:
-        genai.configure(api_key=Config.GEMINI_API_KEY)
+        # APIキーの設定
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
         
-        # Create generation config with temperature
-        generation_config = {
-            "temperature": Config.LLM_TEMPERATURE,
-            "top_p": 0.8,
-            "top_k": 40,
-            "max_output_tokens": 2048,
-        }
+        genai.configure(api_key=api_key)
         
-        # Initialize the model with generation config
-        model = genai.GenerativeModel(model_name=Config.LLM_MODEL)
+        # グローバル設定からLLM設定を取得（デフォルトはgemini-1.5-flash）
+        llm_config = global_config.get('llm', {}) if global_config else {}
+        model_name = llm_config.get('model_name', 'gemini-1.5-flash')
+        
+        # セーフティ設定の定義
+        safety_settings = [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_ONLY_HIGH"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_ONLY_HIGH"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_ONLY_HIGH"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_ONLY_HIGH"
+            }
+        ]
+        
+        # モデルの初期化
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            safety_settings=safety_settings
+        )
+        
+        # レートリミット対策の設定をログに出力
+        logger.info(f"Initialized {model_name} with safety settings")
         
         return model
         
     except Exception as e:
         logger.error(f"Failed to setup LLM: {e}")
         raise
+
+def parse_llm_suggestion(suggestion: str) -> Optional[Dict[str, str]]:
+    """LLMの応答をパースする"""
+    if not suggestion:
+        return None
+
+    try:
+        # 前後の空白を削除
+        cleaned_suggestion = suggestion.strip()
+        
+        # まずそのままJSONとして解析を試みる
+        try:
+            data = json.loads(cleaned_suggestion)
+            if all(key in data for key in ['improvement_description', 'improved_code', 'expected_improvement']):
+                # コードのクリーンアップ
+                code = data['improved_code']
+                if '```python' in code:
+                    code = code.split('```python')[1].split('```')[0].strip()
+                data['improved_code'] = code
+                return data
+        except json.JSONDecodeError:
+            pass
+
+        # マークダウンブロックからJSONを探す
+        json_match = re.search(r'```json\s*(.*?)\s*```', suggestion, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(1).strip())
+                if all(key in data for key in ['improvement_description', 'improved_code', 'expected_improvement']):
+                    # コードのクリーンアップ
+                    code = data['improved_code']
+                    if '```python' in code:
+                        code = code.split('```python')[1].split('```')[0].strip()
+                    data['improved_code'] = code
+                    return data
+            except:
+                pass
+
+        logger.warning("Could not find valid JSON in response")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error parsing suggestion: {str(e)}")
+        return None
 
 def generate_improvement_suggestion(
     task_description: str,
@@ -76,84 +154,82 @@ def generate_improvement_suggestion(
     task_config: Dict[str, Any],
     global_config: Dict[str, Any]
 ) -> str:
-    """LLMを使用してパイプラインの改善案を生成します。
-    
-    Args:
-        task_description (str): タスクの説明
-        current_pipeline_code (str): 現在のパイプラインコード
-        performance_metrics (Dict[str, float]): 現在のパフォーマンスメトリクス
-        task_config (Dict[str, Any]): タスク固有の設定
-        global_config (Dict[str, Any]): グローバルな設定
+    """LLMを使用してパイプラインの改善案を生成する"""
+    try:
+        model = setup_llm(global_config)
         
-    Returns:
-        str: LLMからの応答（JSON形式の文字列）
-    """
-    model = setup_llm()
-    
-    # プロンプトを構築
-    prompt = f"""あなたは機械学習パイプラインの専門家です。以下の情報に基づいて、与えられたパイプラインを改善するための具体的な提案を行ってください。
+        # プロンプトをより制御しやすい形式に変更
+        prompt = f"""Below is an ML pipeline that needs improvement. Follow these steps exactly:
 
-# タスクの説明
+1. First, analyze the current pipeline:
+{current_pipeline_code}
+
+2. Current metrics:
+{json.dumps(performance_metrics, indent=2)}
+
+3. Task details:
 {task_description}
 
-# 現在のパフォーマンスメトリクス
-```json
-{json.dumps(performance_metrics, indent=2)}
-```
+4. Generate improvements focusing on:
+- Feature engineering
+- Model selection
+- Hyperparameter tuning
+- Preprocessing steps
 
-# 現在のパイプラインコード
-```python
-{current_pipeline_code}
-```
-
-# 改善の方向性（例）
-- 特徴量エンジニアリングの改善（新しい特徴量の追加、不要な特徴量の削除、特徴量の変換など）
-- モデルの変更（異なるアルゴリズムの使用、アンサンブル手法の導入など）
-- ハイパーパラメータの最適化
-- データの前処理・正規化の改善
-- クラス不均衡への対応
-- 交差検証戦略の改善
-
-# 出力形式（必ずJSON形式で出力してください）
-```json
+5. Return your response in this exact format:
 {{
-  "improvement_description": "改善内容の簡潔な説明（1-2文）",
-  "improved_code": "改善されたPythonコード（完全な実行可能なコード）",
-  "expected_improvement": "期待される改善内容とその根拠（1-2文）"
+    "improvement_description": "<list key improvements>",
+    "improved_code": "<full_code>",
+    "expected_improvement": "<specific metrics improvements>"
 }}
-```
 
-# 注意点
-- 既存の関数シグネチャ（preprocess_data, create_model_for_optuna, train_final_model, evaluate_model）は維持してください。
-- コードは完全で実行可能な状態で出力してください。
-- パフォーマンスの向上が見込める具体的な改善に焦点を当ててください。
+Important:
+- Return ONLY valid JSON
+- NO markdown formatting in code
+- NO explanation outside JSON
+- Keep ALL function signatures identical
 """
 
-    for attempt in range(Config.MAX_RETRIES):
-        try:
-            # Generate content with safety settings
-            safety_settings = [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            ]
-            
-            response = model.generate_content(
-                prompt,
-                safety_settings=safety_settings,
-                generation_config={"temperature": Config.LLM_TEMPERATURE}
-            )
-            
-            if response and response.text:
-                return response.text
-            raise ValueError("Empty response from LLM")
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} failed: {e}")
-            if attempt < Config.MAX_RETRIES - 1:
-                time.sleep(Config.RETRY_DELAY)
-            else:
-                raise
+        # より保守的な生成設定
+        generation_config = {
+            "temperature": 0.1,
+            "candidate_count": 1,
+            "max_output_tokens": 1024,  # 出力を制限
+            "top_p": 0.8,
+            "top_k": 10
+        }
+
+        # 再試行ロジックの改善
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content(
+                    prompt,
+                    generation_config=generation_config
+                )
+                
+                if response and response.text:
+                    # 応答のクリーンアップを強化
+                    cleaned_text = response.text.strip()
+                    # JSON部分の抽出を試みる
+                    json_match = re.search(r'\{[\s\S]*\}', cleaned_text)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        # 検証
+                        json.loads(json_str)
+                        return json_str
+                    
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 * (attempt + 1))  # 指数バックオフ
+                continue
+
+        return ""
+
+    except Exception as e:
+        logger.error(f"Error generating improvement: {str(e)}")
+        return ""
 
 def parse_llm_suggestion(response: str) -> Dict[str, str]:
     """LLMからの応答をパースしてコードと説明を取り出す"""

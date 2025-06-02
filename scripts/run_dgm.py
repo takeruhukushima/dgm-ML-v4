@@ -4,18 +4,16 @@ DGM (Darwin Gödel Machine) のメイン実行スクリプト。
 コマンドラインからDGMを実行するためのエントリーポイントです。
 """
 
+import argparse
 import os
 import sys
-import argparse
+import json
 import logging
-import yaml
-import pandas as pd
 from pathlib import Path
+from typing import Optional
+import pandas as pd
+import yaml
 from datetime import datetime
-from typing import Dict, Any, Optional
-
-# プロジェクトのルートディレクトリをパスに追加
-sys.path.append(str(Path(__file__).parent.parent))
 
 from dgm_core import (
     MachineLearningPipelineAgent,
@@ -41,18 +39,10 @@ def setup_logging(config: dict, run_dir: Path) -> logging.Logger:
     return logging.getLogger('DGM')
 
 
-def load_config(config_path: str) -> Dict[str, Any]:
-    """設定ファイルを読み込みます。
-    
-    Args:
-        config_path (str): 設定ファイルのパス
-        
-    Returns:
-        Dict[str, Any]: 設定の辞書
-    """
+def load_config(config_path: str) -> dict:
+    """設定ファイルを読み込む"""
     with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-    return config
+        return yaml.safe_load(f)
 
 
 def load_data(data_path: str, target_column: Optional[str] = None) -> pd.DataFrame:
@@ -107,153 +97,122 @@ def setup_output_dirs(output_dir: str) -> Path:
 
 def main():
     # コマンドライン引数のパース
-    parser = argparse.ArgumentParser(description='DGM (Darwin Gödel Machine) for ML Pipeline Evolution')
-    parser.add_argument('--task', type=str, required=True, 
-                       help='タスク名 (例: titanic)')
-    parser.add_argument('--config', type=str, required=True,
-                       help='タスク設定ファイルのパス (例: config/task_titanic.yaml)')
-    parser.add_argument('--global-config', type=str, default='config/global_config.yaml',
-                       help='グローバル設定ファイルのパス (デフォルト: config/global_config.yaml)')
+    parser = argparse.ArgumentParser(description='DGM ML Pipeline Evolution')
+    parser.add_argument('--task', type=str, required=True, help='Task name')
+    parser.add_argument('--config', type=str, required=True, help='Task config path')
     parser.add_argument('--output-dir', type=str, default='output',
                        help='出力ディレクトリ (デフォルト: output)')
-    parser.add_argument('--generations', type=int, default=10,
-                       help='進化の世代数 (デフォルト: 10)')
-    parser.add_argument('--population-size', type=int, default=3,
-                       help='各世代の個体数 (デフォルト: 3)')
     
     args = parser.parse_args()
     
-    # 出力ディレクトリのセットアップ
+    # 設定ファイルの読み込み
+    task_config = load_config(args.config)
+    global_config_path = Path(__file__).parent.parent / 'config' / 'global_config.yaml'
+    global_config = load_config(global_config_path)
+    
+    # 出力ディレクトリの設定
     run_dir = setup_output_dirs(args.output_dir)
     
-    # 設定ファイルの読み込み
-    try:
-        task_config = load_config(args.config)
-        global_config = load_config(args.global_config) if os.path.exists(args.global_config) else {}
-    except Exception as e:
-        print(f"Error loading config files: {e}")
-        return 1
-    
-    # ロギングのセットアップ
+    # ロガーの設定
     logger = setup_logging(global_config, run_dir)
-    logger.info(f"Starting DGM run for task: {args.task}")
     
-    # データの読み込み
     try:
+        logger.info("Starting DGM run for task: %s", args.task)
+        
+        # データの読み込み
         data_path = task_config['task']['data_path']
-        target_column = task_config['task'].get('target_column')
-        
+        target_column = task_config['task']['target_column']
         logger.info(f"Loading data from {data_path}...")
-        df = load_data(data_path, target_column)
-        logger.info(f"Loaded data shape: {df.shape}")
+        df_train = load_data(data_path, target_column)
+        logger.info(f"Loaded data shape: {df_train.shape}")
         
-        # 目的変数が指定されていることを確認
-        if target_column and target_column not in df.columns:
-            logger.error(f"Target column '{target_column}' not found in data")
-            return 1
-            
-    except Exception as e:
-        logger.error(f"Error loading data: {e}", exc_info=True)
-        return 1
-    
-    # アーカイブの初期化
-    archive_dir = run_dir / 'pipelines' / 'archive'
-    archive = PipelineArchive(archive_dir=str(archive_dir))
-    
-    try:
-        # DGMエボリューションの初期化
-        logger.info("""
-        ========================================
-        DGM Evolution を初期化しています...
-        タスク: %s
-        世代数: %d
-        個体数: %d
-        ========================================
-        """, args.task, args.generations, args.population_size)
+        # アーカイブの初期化
+        archive = PipelineArchive(run_dir / 'pipelines' / 'archive')
         
-        dgm_evolution = DGMEvolution(
+        # DGM進化の実行
+        dgm = DGMEvolution(
             task_config=task_config['task'],
             global_config=global_config,
             archive=archive
         )
         
-        logger.info("初期化が完了しました。データの準備を開始します...")
-        
-        # 初期パイプラインの生成
-        logger.info("Generating initial pipeline...")
-        initial_pipeline_code = generate_initial_pipeline(task_config['task'])
-        
-        # 初期パイプラインをファイルに保存
-        initial_pipeline_path = run_dir / 'pipelines' / 'initial_pipeline.py'
-        with open(initial_pipeline_path, 'w', encoding='utf-8') as f:
-            f.write(initial_pipeline_code)
-        logger.info(f"Initial pipeline saved to: {initial_pipeline_path}")
-        
-        # 進化の実行
-        print("\n" + "="*50)
-        print(f"  DGM 進化を開始します (世代数: {args.generations}, 個体数: {args.population_size})")
-        print("="*50 + "\n")
-        
-        best_agent = dgm_evolution.run_evolution(
-            initial_pipeline_code=initial_pipeline_code,
-            df_train_full=df,
-            target_column=target_column,
-            num_generations=args.generations,
-            population_size=args.population_size
-        )
-        
-        print("\n" + "="*50)
-        print("  DGM 進化が完了しました！")
-        print("="*50 + "\n")
-        
-        # 結果の保存
-        if best_agent:
-            best_pipeline_path = run_dir / 'pipelines' / 'best_pipeline.py'
-            best_agent.save_to_file(str(best_pipeline_path))
+        try:
+            logger.info("""
+            ========================================
+            DGM Evolution を初期化しています...
+            タスク: %s
+            ========================================
+            """, args.task)
             
-            # ベストエージェントの情報を表示
-            if best_agent and best_agent.performance_metrics:
-                best_metrics = best_agent.performance_metrics
+            dgm_evolution = DGMEvolution(
+                task_config=task_config['task'],
+                global_config=global_config,
+                archive=archive
+            )
+            
+            logger.info("初期化が完了しました。データの準備を開始します...")
+            
+            # テストデータの読み込み
+            test_data = None
+            test_data_path = task_config.get('data', {}).get('test_path')
+            if test_data_path:
+                test_data = pd.read_csv(test_data_path)
+                logger.info(f"Test data loaded: {test_data.shape}")
+            
+            best_agent = dgm.run(df_train)
+            
+            # 結果の保存
+            if best_agent:
+                best_pipeline_path = run_dir / 'pipelines' / 'best_pipeline.py'
+                best_agent.save_to_file(str(best_pipeline_path))
                 
-                print("\n" + "="*50)
-                print("  最良パイプラインのパフォーマンスメトリクス")
-                print("="*50)
-                
-                # メトリクスが存在する場合のみ表示処理を実行
-                if best_metrics:
-                    max_metric_length = max(len(metric) for metric in best_metrics.keys())
-                    for metric, value in best_metrics.items():
-                        print(f"  {metric.ljust(max_metric_length)}: {value:.4f}")
+                # ベストエージェントの情報を表示
+                if best_agent and best_agent.performance_metrics:
+                    best_metrics = best_agent.performance_metrics
                     
-                    print(f"\n  最良パイプラインは以下に保存されました:")
-                    print(f"  {best_pipeline_path}")
-                    print("="*50 + "\n")
+                    print("\n" + "="*50)
+                    print("  最良パイプラインのパフォーマンスメトリクス")
+                    print("="*50)
+                    
+                    # メトリクスが存在する場合のみ表示処理を実行
+                    if best_metrics:
+                        max_metric_length = max(len(metric) for metric in best_metrics.keys())
+                        for metric, value in best_metrics.items():
+                            print(f"  {metric.ljust(max_metric_length)}: {value:.4f}")
+                        
+                        print(f"\n  最良パイプラインは以下に保存されました:")
+                        print(f"  {best_pipeline_path}")
+                        print("="*50 + "\n")
+                    else:
+                        print("  メトリクスが計算されていません。")
+                        print("="*50 + "\n")
+                    
+                    # 結果をJSONファイルに保存
+                    results = {
+                        'best_agent_id': best_agent.agent_id,
+                        'best_metrics': best_metrics or {},  # 空の場合は空辞書を使用
+                        'generation': best_agent.generation,
+                        'parent_id': best_agent.parent_id,
+                        'pipeline_file': str(best_pipeline_path.relative_to(run_dir))
+                    }
+                    
+                    results_file = run_dir / 'results' / 'final_results.json'
+                    with open(results_file, 'w', encoding='utf-8') as f:
+                        json.dump(results, f, indent=2)
+                        
+                    logger.info(f"Final results saved to: {results_file}")
                 else:
-                    print("  メトリクスが計算されていません。")
-                    print("="*50 + "\n")
-                
-                # 結果をJSONファイルに保存
-                results = {
-                    'best_agent_id': best_agent.agent_id,
-                    'best_metrics': best_metrics or {},  # 空の場合は空辞書を使用
-                    'generation': best_agent.generation,
-                    'parent_id': best_agent.parent_id,
-                    'pipeline_file': str(best_pipeline_path.relative_to(run_dir))
-                }
-                
-                results_file = run_dir / 'results' / 'final_results.json'
-                with open(results_file, 'w', encoding='utf-8') as f:
-                    json.dump(results, f, indent=2)
-                    
-                logger.info(f"Final results saved to: {results_file}")
-            else:
-                logger.warning("No successful pipeline was generated or no metrics were calculated.")
-        
-        logger.info("DGM evolution completed successfully!")
-        return 0
-        
+                    logger.warning("No successful pipeline was generated or no metrics were calculated.")
+            
+            logger.info("DGM evolution completed successfully!")
+            return 0
+            
+        except Exception as e:
+            logger.error(f"Error during DGM evolution: {e}", exc_info=True)
+            return 1
+
     except Exception as e:
-        logger.error(f"Error during DGM evolution: {e}", exc_info=True)
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         return 1
 
 
