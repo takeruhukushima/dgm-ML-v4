@@ -1,0 +1,26 @@
+# タスク固有の設定 (タイタニックの生存予測)
+
+task:
+  name: "titanic_survival_prediction"
+  description: "Predict passenger survival on the Titanic"
+  data_path: "data/titanic/train.csv"
+  target_column: "Survived"
+  
+  evaluation_metric: "accuracy"
+  
+  hyperparameter_tuning:
+    enabled: true
+    timeout_per_pipeline: 300
+    
+  candidate_models:
+    - "LogisticRegression"
+    - "RandomForestClassifier"
+    - "GradientBoostingClassifier"
+    
+  candidate_fe_operations:
+    - "impute_numerical_median"
+    - "impute_categorical_mode"
+    - "encode_categorical"
+    - "scale_numerical"
+    - "create_title_feature"
+    - "create_family_size"

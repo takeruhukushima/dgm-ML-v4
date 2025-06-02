@@ -1,0 +1,25 @@
+# Core ML Libraries
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+optuna  # ハイパーパラメータ最適化用
+
+# LLM Interaction (例: OpenAI, Google Generative AI)
+openai
+google-generativeai
+
+# Configuration
+pyyaml
+
+# Utilities
+tqdm  # プログレスバー
+
+# Testing
+pytest
+pytest-cov
+
+# Jupyter
+jupyter
+ipykernel

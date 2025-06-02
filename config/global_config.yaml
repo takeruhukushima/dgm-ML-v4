@@ -1,0 +1,43 @@
+llm:
+  provider_name: "gemini"
+  model_name: "gemini-1.5-pro"  # または "gemini-1.0-pro" など、使用するモデルに応じて変更
+  temperature_suggestion: 0.7
+  temperature_code_gen: 0.3
+  max_retries: 3
+  retry_delay: 5
+  timeout: 60  # Geminiは応答に時間がかかることがあるためタイムアウトを延長
+  safety_settings:  # Geminiのセーフティ設定
+    - category: "HARM_CATEGORY_HARASSMENT"
+      threshold: "BLOCK_NONE"
+    - category: "HARM_CATEGORY_HATE_SPEECH"
+      threshold: "BLOCK_NONE"
+    - category: "HARM_CATEGORY_SEXUALLY_EXPLICIT"
+      threshold: "BLOCK_NONE"
+    - category: "HARM_CATEGORY_DANGEROUS_CONTENT"
+      threshold: "BLOCK_NONE"
+
+evolution:
+  max_iterations: 50
+  parent_selection_strategy: "elite_plus_diversity"
+  diversity_weight: 0.3
+  mutation_rate: 0.8
+  population_size: 10
+
+evaluation:
+  cross_validation_folds: 5
+  metrics:
+    - "accuracy"
+    - "f1_score"
+    - "roc_auc"
+  computation_timeout: 300
+
+archive:
+  base_dir: "pipelines"
+  size_limit: 100
+  diversity_threshold: 0.3
+  performance_threshold: 0.5
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  output_dir: "logs"
