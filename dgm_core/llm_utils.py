@@ -1,151 +1,354 @@
 """
 LLM (大規模言語モデル) との連携に必要なユーティリティ関数を提供するモジュール。
-Gemini APIを使用します。
+複数のLLMプロバイダー（Gemini, Groq Qwen-32Bなど）をサポートします。
 """
 
-import os
 import json
 import re
 import time
+import random
+import traceback
 import logging
-from typing import Dict, Any, Optional, List, Union
-import google.generativeai as genai
-from .config import Config
+import os
+from typing import Dict, List, Optional, Union, Any
+from enum import Enum
+from abc import ABC, abstractmethod
+
+import yaml
+from dotenv import load_dotenv
+
+# ロガーの設定
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
+
+# 設定をインポート
+try:
+    from .config import Config
+except ImportError:
+    # テスト時などで相対インポートが失敗する場合のフォールバック
+    from dgm_core.config import Config
 
 logger = logging.getLogger(__name__)
 
-# Google Generative AIを初期化
-try:
-    # 環境変数からAPIキーを取得
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is not set")
-    
-    genai.configure(api_key=api_key)
-    
-    # セーフティ設定（必要に応じて調整）
-    safety_settings = [
-        {
-            "category": "HARM_CATEGORY_HARASSMENT",
-            "threshold": "BLOCK_NONE"
-        },
-        {
-            "category": "HARM_CATEGORY_HATE_SPEECH",
-            "threshold": "BLOCK_NONE"
-        },
-        {
-            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            "threshold": "BLOCK_NONE"
-        },
-        {
-            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-            "threshold": "BLOCK_NONE"
-        }
-    ]
-    
-except Exception as e:
-    print(f"Error initializing Gemini API: {e}")
-    raise
+# LLMプロバイダーを定義する列挙型
+class LLMProvider(str, Enum):
+    GEMINI = "gemini"
+    GROQ = "groq"
+    # 他のプロバイダーを追加可能
 
-def setup_llm(global_config: dict = None) -> 'google.generativeai.GenerativeModel':
-    """LLMの設定を初期化する
+# プロバイダーごとのデフォルトモデル
+DEFAULT_MODELS = {
+    LLMProvider.GEMINI: "gemini-1.5-flash",
+    LLMProvider.GROQ: "meta-llama/llama-4-scout-17b-16e-instruct"
+}
+
+# プロバイダーごとのAPIキー環境変数名
+API_KEY_ENV_VARS = {
+    LLMProvider.GEMINI: "GEMINI_API_KEY",
+    LLMProvider.GROQ: "GROQ_API_KEY"
+}
+
+class LLMClient(ABC):
+    """LLMクライアントの抽象基底クラス"""
+    
+    @abstractmethod
+    def generate_text(self, prompt: str, **kwargs) -> str:
+        """テキストを生成する"""
+        pass
+    
+    @abstractmethod
+    def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        """チャット形式でテキストを生成する"""
+        pass
+
+class GeminiClient(LLMClient):
+    """Google Gemini APIクライアント"""
+    
+    def __init__(self, api_key: str = None, model_name: str = None):
+        import google.generativeai as genai
+        self.genai = genai
+        
+        # APIキーの設定
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        
+        genai.configure(api_key=self.api_key)
+        
+        # モデル名の設定
+        self.model_name = model_name or DEFAULT_MODELS[LLMProvider.GEMINI]
+        
+        # セーフティ設定
+        self.safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"}
+        ]
+        
+        # モデルの初期化
+        self.model = genai.GenerativeModel(
+            model_name=self.model_name,
+            safety_settings=self.safety_settings
+        )
+        
+        logger.info(f"Initialized Gemini model: {self.model_name}")
+    
+    def generate_text(self, prompt: str, **kwargs) -> str:
+        """テキストを生成する"""
+        response = self.model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": kwargs.get("temperature", 0.7),
+                "max_output_tokens": kwargs.get("max_tokens", 2048),
+                "top_p": kwargs.get("top_p", 0.95),
+            }
+        )
+        return response.text
+    
+    def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        """チャット形式でテキストを生成する"""
+        chat = self.model.start_chat(history=[])
+        response = chat.send_message(
+            messages[-1]["content"],
+            generation_config={
+                "temperature": kwargs.get("temperature", 0.7),
+                "max_output_tokens": kwargs.get("max_tokens", 2048),
+                "top_p": kwargs.get("top_p", 0.95),
+            }
+        )
+        return response.text
+
+class GroqClient(LLMClient):
+    """Groq APIクライアント（Qwen-32Bなど）"""
+    
+    def __init__(self, api_key: str = None, model_name: str = None, **kwargs):
+        from groq import Groq
+        
+        # APIキーの設定
+        self.api_key = api_key or os.getenv("GROQ_API_KEY")
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY environment variable is not set")
+        
+        # モデル名の設定
+        self.model_name = model_name or DEFAULT_MODELS[LLMProvider.GROQ]
+        
+        # デフォルトパラメータの設定
+        self.default_params = {
+            'temperature': 0.7,
+            'max_tokens': 2048,
+            'top_p': 1.0,
+            'frequency_penalty': 0.0,
+            'presence_penalty': 0.0,
+            'stop': None,
+            'stream': False
+        }
+        
+        # デフォルトパラメータを更新
+        self.default_params.update({k: v for k, v in kwargs.items() if k in self.default_params})
+        
+        # クライアントの初期化
+        self.client = Groq(api_key=self.api_key)
+        
+        logger.info(f"Initialized Groq model: {self.model_name} with params: {self.default_params}")
+    
+    def generate_text(self, prompt: str, **kwargs) -> str:
+        """テキストを生成する"""
+        messages = [
+            {"role": "system", "content": "あなたは親切で、正確で、役立つアシスタントです。"},
+            {"role": "user", "content": prompt}
+        ]
+        
+        # パラメータをマージ（メソッド呼び出し時の引数を優先）
+        params = self.default_params.copy()
+        params.update({k: v for k, v in kwargs.items() if k in self.default_params})
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                **{k: v for k, v in params.items() if v is not None}
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error in generate_text: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+    
+    def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        """チャット形式でテキストを生成する"""
+        # メッセージを適切な形式に変換
+        formatted_messages = []
+        for msg in messages:
+            role = "assistant" if msg.get("role") == "model" else msg.get("role", "user")
+            formatted_messages.append({"role": role, "content": msg.get("content", "")})
+        
+        # パラメータをマージ（メソッド呼び出し時の引数を優先）
+        params = self.default_params.copy()
+        params.update({k: v for k, v in kwargs.items() if k in self.default_params})
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=formatted_messages,
+                **{k: v for k, v in params.items() if v is not None}
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error in chat: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+
+def get_llm_client(
+    provider: Union[str, LLMProvider] = LLMProvider.GROQ,
+    model_name: str = None,
+    api_key: str = None,
+    **kwargs
+) -> LLMClient:
+    """指定されたプロバイダーのLLMクライアントを取得する
+    
+    Args:
+        provider (Union[str, LLMProvider]): LLMプロバイダー
+        model_name (str, optional): 使用するモデル名. Defaults to None.
+        api_key (str, optional): APIキー. Defaults to None.
+        **kwargs: その他の引数（プロバイダー固有）
+        
+    Returns:
+        LLMClient: 初期化されたLLMクライアント
+    """
+    # プロバイダーを正規化
+    if isinstance(provider, str):
+        try:
+            provider = LLMProvider(provider.lower())
+        except ValueError:
+            raise ValueError(f"サポートされていないLLMプロバイダーです: {provider}")
+    
+    # 環境変数からAPIキーを取得（指定されていない場合）
+    if not api_key:
+        api_key = os.getenv(API_KEY_ENV_VARS[provider])
+        if not api_key:
+            raise ValueError(f"{API_KEY_ENV_VARS[provider]} 環境変数が設定されていません。")
+    
+    # デフォルトのモデル名を設定
+    if not model_name:
+        model_name = DEFAULT_MODELS[provider]
+    
+    # プロバイダーに応じたクライアントを初期化
+    if provider == LLMProvider.GEMINI:
+        return GeminiClient(api_key=api_key, model_name=model_name, **kwargs)
+    elif provider == LLMProvider.GROQ:
+        return GroqClient(api_key=api_key, model_name=model_name, **kwargs)
+    else:
+        raise ValueError(f"サポートされていないLLMプロバイダーです: {provider}")
+
+def setup_llm(global_config: dict = None) -> LLMClient:
+    """LLMクライアントを初期化する
 
     Args:
         global_config (dict, optional): グローバル設定. Defaults to None.
 
     Returns:
-        google.generativeai.GenerativeModel: 初期化されたモデル
+        LLMClient: 初期化されたLLMクライアント
     """
+    # デフォルト設定
+    default_config = {
+        'llm_provider': 'groq',  # デフォルトはGroq
+        'llm_model': DEFAULT_MODELS[LLMProvider.GROQ],
+        'temperature': 0.7,
+        'max_tokens': 2048,
+        'top_p': 1.0,
+        'frequency_penalty': 0.0,
+        'presence_penalty': 0.0,
+    }
+    
+    # グローバル設定をマージ
+    if global_config:
+        llm_config = {**default_config, **global_config.get('llm', {})}
+    else:
+        llm_config = default_config
+    
+    # LLMクライアントを初期化
     try:
-        # APIキーの設定
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
-        
-        genai.configure(api_key=api_key)
-        
-        # グローバル設定からLLM設定を取得（デフォルトはgemini-1.5-flash）
-        llm_config = global_config.get('llm', {}) if global_config else {}
-        model_name = llm_config.get('model_name', 'gemini-1.5-flash')
-        
-        # セーフティ設定の定義
-        safety_settings = [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_ONLY_HIGH"
-            },
-            {
-                "category": "HARM_CATEGORY_HATE_SPEECH",
-                "threshold": "BLOCK_ONLY_HIGH"
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_ONLY_HIGH"
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_ONLY_HIGH"
-            }
-        ]
-        
-        # モデルの初期化
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            safety_settings=safety_settings
+        client = get_llm_client(
+            provider=llm_config['llm_provider'],
+            model_name=llm_config['llm_model'],
+            temperature=llm_config['temperature'],
+            max_tokens=llm_config['max_tokens'],
+            top_p=llm_config['top_p'],
+            frequency_penalty=llm_config['frequency_penalty'],
+            presence_penalty=llm_config['presence_penalty']
         )
         
-        # レートリミット対策の設定をログに出力
-        logger.info(f"Initialized {model_name} with safety settings")
+        logger.info(f"Initialized {llm_config['llm_provider']} with model {llm_config['llm_model']}")
+        return client
         
-        return model
+    except Exception as e:
+        logger.error(f"LLMの初期化中にエラーが発生しました: {e}")
+        raise
         
     except Exception as e:
         logger.error(f"Failed to setup LLM: {e}")
         raise
 
-def parse_llm_suggestion(suggestion: str) -> Optional[Dict[str, str]]:
-    """LLMの応答をパースする"""
-    if not suggestion:
-        return None
+# ヘルパー関数: parse_llm_suggestion の外部または同じモジュールレベルに定義
+import re
+import json
 
+
+
+# def _extract_suggestion_from_json_like_prefix(text_block: str) -> str:
+#     ...（旧実装は削除）...
+
+def extract_suggestion_from_llm_output(llm_output: str) -> str:
+    """
+    LLMの出力から最初のPythonコードブロック（```python ... ```）を抽出して返す。
+    Args:
+        llm_output (str): LLMの出力テキスト
+    Returns:
+        str: 抽出されたPythonコード、または見つからない場合は空文字列
+    Returns:
+        dict | None: 抽出・パースされたJSONオブジェクト。見つからない場合はNone。
+    """
+    import re, json
+    inside_json_block = False
+    json_lines = []
+    for line in llm_output.split('\n'):
+        striped_line = line.strip()
+        if striped_line.startswith("```json"):
+            inside_json_block = True
+            continue
+        if inside_json_block and striped_line.startswith("```"):
+            inside_json_block = False
+            break
+        if inside_json_block:
+            json_lines.append(line)
+    if not json_lines:
+        fallback_pattern = r"\{.*?\}"
+        matches = re.findall(fallback_pattern, llm_output, re.DOTALL)
+        for candidate in matches:
+            candidate = candidate.strip()
+            if candidate:
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    candidate_clean = re.sub(r"[\x00-\x1F\x7F]", "", candidate)
+                    try:
+                        return json.loads(candidate_clean)
+                    except json.JSONDecodeError:
+                        continue
+        return None
+    json_string = "\n".join(json_lines).strip()
     try:
-        # 前後の空白を削除
-        cleaned_suggestion = suggestion.strip()
-        
-        # まずそのままJSONとして解析を試みる
+        return json.loads(json_string)
+    except json.JSONDecodeError:
+        json_string_clean = re.sub(r"[\x00-\x1F\x7F]", "", json_string)
         try:
-            data = json.loads(cleaned_suggestion)
-            if all(key in data for key in ['improvement_description', 'improved_code', 'expected_improvement']):
-                # コードのクリーンアップ
-                code = data['improved_code']
-                if '```python' in code:
-                    code = code.split('```python')[1].split('```')[0].strip()
-                data['improved_code'] = code
-                return data
+            return json.loads(json_string_clean)
         except json.JSONDecodeError:
-            pass
-
-        # マークダウンブロックからJSONを探す
-        json_match = re.search(r'```json\s*(.*?)\s*```', suggestion, re.DOTALL)
-        if json_match:
-            try:
-                data = json.loads(json_match.group(1).strip())
-                if all(key in data for key in ['improvement_description', 'improved_code', 'expected_improvement']):
-                    # コードのクリーンアップ
-                    code = data['improved_code']
-                    if '```python' in code:
-                        code = code.split('```python')[1].split('```')[0].strip()
-                    data['improved_code'] = code
-                    return data
-            except:
-                pass
-
-        logger.warning("Could not find valid JSON in response")
-        return None
-
-    except Exception as e:
-        logger.error(f"Error parsing suggestion: {str(e)}")
-        return None
+            return None
 
 def generate_improvement_suggestion(
     task_description: str,
@@ -153,50 +356,160 @@ def generate_improvement_suggestion(
     performance_metrics: Dict[str, float],
     task_config: Dict[str, Any],
     global_config: Dict[str, Any]
-) -> str:
-    """LLMを使用してパイプラインの改善案を生成する"""
-    try:
-        model = setup_llm(global_config)
+) -> Dict[str, str]:
+    """LLMを使用してパイプラインの改善案を生成する
+    
+    Args:
+        task_description (str): タスクの説明
+        current_pipeline_code (str): 現在のパイプラインコード
+        performance_metrics (Dict[str, float]): 現在のパフォーマンスメトリクス
+        task_config (Dict[str, Any]): タスク設定
+        global_config (Dict[str, Any]): グローバル設定
         
-        # プロンプトをより制御しやすい形式に変更
-        prompt = f"""Below is an ML pipeline that needs improvement. Follow these steps exactly:
+    Returns:
+        Dict[str, str]: 改善案の情報
+    """
+    try:
+        # LLMを初期化
+        llm = setup_llm(global_config)
+        
+        # グローバル設定からLLM設定を取得
+        llm_config = global_config.get('llm', {}) if global_config else {}
+        provider = llm_config.get('llm_provider', 'groq')
+        model_name = llm_config.get('llm_model', DEFAULT_MODELS.get(LLMProvider(provider), 'qwen-qwq-32b'))
+        
+        # パフォーマンスメトリクスを読みやすい形式に変換
+        metrics_str = '\n'.join([f'- {k}: {v:.4f}' for k, v in performance_metrics.items()])
+        
+        # より具体的なプロンプトテンプレート
+        prompt = """
+        以下の機械学習パイプラインの改善を依頼します。
+        
+        # タスクの説明
+        {task_description}
+        
+        # 現在のパフォーマンスメトリクス
+        {metrics}
+        
+        # 現在のパイプラインコード
+        ```python
+        {pipeline_code}
+        ```
+        
+        # 改善の方向性（優先度順）
+        1. パフォーマンスの向上（精度、再現率、F1スコアなどの改善）
+        2. コードの効率化（不要な処理の削除、ベクトル化の適用など）
+        3. 新しい特徴量の追加（ドメイン知識に基づく特徴量の追加）
+        4. ハイパーパラメータの最適化（グリッドサーチやランダムサーチの適用）
+        
+        # 注意事項
+        - コードは完全に実行可能な形式で提供してください
+        - 変更点についての説明を具体的に記述してください
+        - パフォーマンスの向上が期待できる根拠を説明してください
+        - 応答は必ず以下のJSON形式で返してください
+        - コードブロックはマークダウンのコードブロック形式で囲んでください
+        
+        # 応答フォーマット（以下のJSON形式で返してください）
+        {{
+            "suggestion": "具体的な改善点とその根拠をここに記述",
+            "code": "改善された完全なPythonコードをここに記述.改行は\nで表現してください。絶対に改行は\nで表現してください。"
+        }}
+        
+        あなたの回答は自動的に解析されるため、文字列の回答が正確に正しい形式であることを確認してください。
 
-1. First, analyze the current pipeline:
-{current_pipeline_code}
-
-2. Current metrics:
-{json.dumps(performance_metrics, indent=2)}
-
-3. Task details:
-{task_description}
-
-4. Generate improvements focusing on:
-- Feature engineering
-- Model selection
-- Hyperparameter tuning
-- Preprocessing steps
-
-5. Return your response in this exact format:
-{{
-    "improvement_description": "<list key improvements>",
-    "improved_code": "<full_code>",
-    "expected_improvement": "<specific metrics improvements>"
-}}
-
-Important:
-- Return ONLY valid JSON
-- NO markdown formatting in code
-- NO explanation outside JSON
-- Keep ALL function signatures identical
-"""
-
-        # より保守的な生成設定
-        generation_config = {
-            "temperature": 0.1,
-            "candidate_count": 1,
-            "max_output_tokens": 1024,  # 出力を制限
-            "top_p": 0.8,
-            "top_k": 10
+        上記のJSON形式で、suggestionとcodeの2つのキーを含むようにしてください。
+        
+        """.format(
+            task_description=task_description,
+            metrics=metrics_str,
+            pipeline_code=current_pipeline_code
+        )
+        
+        # リトライとレート制限の設定            
+        max_retries = 3
+        base_delay = 10  # ベースの遅延（秒）
+        max_delay = 60   # 最大遅延（秒）
+        
+        # リクエスト間の遅延（秒）
+        time.sleep(5)  # ベースラインの遅延を追加
+        
+        for attempt in range(max_retries):
+            try:
+                # LLMにリクエストを送信
+                messages = [
+                    {"role": "system", "content": "あなたは熟練したデータサイエンティストです。正確で効率的なコードを生成してください。"},
+                    {"role": "user", "content": prompt}
+                ]
+                
+                logger.info(f"Sending request to {provider} (attempt {attempt + 1}/{max_retries})")
+                
+                # プロバイダーに応じたリクエスト送信
+                start_time = time.time()
+                try:
+                    if provider == 'gemini':
+                        # Geminiの場合はテキスト生成を使用
+                        response = llm.generate_text(prompt)
+                    else:
+                        # Groqの場合はチャット形式を使用
+                        response = llm.chat(messages)
+                    
+                    # レスポンスの処理時間を記録
+                    elapsed = time.time() - start_time
+                    logger.info(f"Received response from {provider} in {elapsed:.2f} seconds")
+                    
+                    # レスポンスが有効な場合はループを抜ける
+                    if response:
+                        if isinstance(response, str) and len(response) < 20:
+                            logger.warning(f"Suspiciously short response: {response}")
+                            raise ValueError("Response too short")
+                        break
+                        
+                except Exception as api_error:
+                    elapsed = time.time() - start_time
+                    logger.error(f"API error after {elapsed:.2f} seconds: {str(api_error)}")
+                    raise
+                
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                
+                # 最後の試行でない場合のみリトライ
+                if attempt < max_retries - 1:
+                    # 指数バックオフ + ジッターを追加
+                    delay = min(base_delay * (2 ** attempt) + random.uniform(0, 5), max_delay)
+                    logger.info(f"Retrying in {delay:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                else:
+                    logger.error("Max retries reached. Giving up.")
+                    raise
+        
+        # レート制限を避けるための追加の遅延
+        time.sleep(2)
+        
+        # 生のレスポンスを表示
+        print("\n" + "="*80)
+        print("LLM Raw Response:")
+        print("-"*40)
+        print(response)
+        print("="*80 + "\n")
+        
+        # 応答をパース
+        code = extract_suggestion_from_llm_output(response)
+        
+        return {
+            'suggestion': '',
+            'code': code if code else current_pipeline_code,
+            'model': model_name,
+            'provider': provider
+        }
+        
+    except Exception as e:
+        logger.error(f"改善案の生成中にエラーが発生しました: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            'suggestion': f"エラーが発生しました: {str(e)}",
+            'code': current_pipeline_code,
+            'model': 'error',
+            'provider': 'error'
         }
 
         # 再試行ロジックの改善
@@ -231,46 +544,7 @@ Important:
         logger.error(f"Error generating improvement: {str(e)}")
         return ""
 
-def parse_llm_suggestion(response: str) -> Dict[str, str]:
-    """LLMからの応答をパースしてコードと説明を取り出す"""
-    try:
-        # JSONとして解析を試みる
-        data = json.loads(response)
-        
-        # 必要なキーが存在するか確認
-        required_keys = ['improvement_description', 'improved_code', 'expected_improvement']
-        if not all(key in data for key in required_keys):
-            raise ValueError("Missing required keys in LLM response")
-            
-        # コードブロックのクリーンアップ
-        if '```python' in data['improved_code']:
-            code = data['improved_code'].split('```python')[1].split('```')[0].strip()
-        else:
-            code = data['improved_code'].strip()
-            
-        return {
-            'description': data['improvement_description'],
-            'code': code,
-            'expected_improvement': data['expected_improvement']
-        }
-        
-    except json.JSONDecodeError:
-        # JSONとして解析できない場合のフォールバック処理
-        code_start = response.find('```python')
-        code_end = response.find('```', code_start + 8)
-        
-        if code_start != -1 and code_end != -1:
-            code = response[code_start + 8:code_end].strip()
-            return {
-                'description': "パースエラー - コードのみ抽出",
-                'code': code,
-                'expected_improvement': "不明"
-            }
-        else:
-            raise ValueError("Could not parse LLM response")
-    except Exception as e:
-        print(f"Error parsing LLM response: {e}")
-        return None
+
 
 
 def validate_pipeline_code(code: str) -> Dict[str, Any]:

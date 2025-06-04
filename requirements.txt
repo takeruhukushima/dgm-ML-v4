@@ -5,10 +5,13 @@ scikit-learn
 xgboost
 lightgbm
 optuna  # ハイパーパラメータ最適化用
+python-dotenv  # 環境変数管理用
+pyyaml  # YAMLファイルの読み書き用
 
-# LLM Interaction (例: OpenAI, Google Generative AI)
-openai
-google-generativeai
+# LLM Interaction (例: OpenAI, Google Generative AI, Groq)
+openai>=1.0.0  # OpenAI互換APIクライアント
+google-generativeai  # Gemini APIクライアント
+groq  # Groq公式クライアント
 
 # Configuration
 pyyaml

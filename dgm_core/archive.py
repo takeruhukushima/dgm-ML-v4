@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 import pandas as pd
+import numpy as np
 
 if TYPE_CHECKING:
     from .agent import MachineLearningPipelineAgent

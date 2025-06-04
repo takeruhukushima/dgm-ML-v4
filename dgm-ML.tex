@@ -1,0 +1,55 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage{amsmath, amssymb, graphicx, hyperref}
+\usepackage{geometry}
+\geometry{margin=25mm}
+
+\title{進化的LLM支援型機械学習パイプライン自動生成システム\ \texttt{dgm-ML} の実験報告}
+\author{福島 岳瑠}
+\date{2025年6月4日}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+本稿では、大規模言語モデル（LLM）を活用した進化的アルゴリズムによる機械学習パイプライン自動生成システム\texttt{dgm-ML}の設計と実験結果について報告する。システムはパイプラインの自動改良・評価・保存を繰り返し、最適なモデル構築を目指す。GroqやGeminiなど最新LLM APIを統合し、パイプライン生成の効率化と性能向上を検証した。
+\end{abstract}
+
+\section{introduction}
+\subsection{研究背景}
+近年、機械学習（ML）は多様な分野で活用されているが、実務レベルで高精度なMLパイプラインを設計・実装するにはデータ前処理、特徴量設計、モデル選択、ハイパーパラメータ調整など多くの専門的知識と試行錯誤が必要である。AutoML技術の発展により一部の工程は自動化されてきたが、従来手法は柔軟性や表現力に限界があった。一方、大規模言語モデル（LLM）は自然言語理解・コード生成能力に優れ、MLパイプラインの自動設計にも応用可能性が高いと注目されている。
+
+\subsection{目的}
+本研究の目的は、LLMの自然言語・コード生成能力と進化的最適化アルゴリズムを組み合わせることで、MLパイプラインの自動生成・改良を高精度かつ自律的に実現することである。これにより、非専門家でも高性能なMLパイプラインを容易に構築できる環境を提供し、ML実務の生産性向上と自動化を目指す。
+
+\section{実験手法}
+\begin{itemize}
+  \item \textbf{システム構成}: Python製の\texttt{dgm-ML}フレームワークを開発し、LLM API（Groq, Gemini）を通じてパイプライン改善コードを自動生成。
+  \item \textbf{進化的アルゴリズム}: エージェント（パイプライン）集団を世代ごとに改良・評価し、優秀な個体を保存・継承。
+  \item \textbf{評価タスク}: Titanic生存予測データセットを用い、精度・F1スコア・ROC-AUCで性能評価。
+  \item \textbf{比較}: LLMによる自動生成パイプラインと従来型（手動設計）パイプラインの性能比較。
+\end{itemize}
+
+\section{結果}
+\begin{itemize}
+  \item LLM支援進化により、最良パイプラインの\textbf{accuracy}: 0.80, \textbf{f1	extunderscore score}: 0.72, \textbf{roc	extunderscore auc}: 0.82 を達成。
+  \item Groq LLM（Llama系）の利用時、日本語指示やコード生成の安定性が高かった。
+  \item 進化過程・各世代のパイプラインや予測結果が自動保存され、再現性・検証が容易であった。
+\end{itemize}
+
+\section{考察}
+LLMの自然言語理解・コード生成能力は、従来の自動ML手法に比べて柔軟性・表現力に優れる。一方で、生成コードの妥当性チェックやデータリーク防止など、AI生成特有の課題も顕在化した。Groq APIの応答速度・安定性はGeminiより優れており、日本語環境下でも高い実用性を示した。
+
+\section{結論}
+LLM支援進化的パイプライン自動生成は、機械学習実務の生産性向上・自動化に有効であることを示した。今後は多様なデータセットやタスクへの適用、生成コードの品質保証技術の導入が課題である。
+
+\section*{参考文献}
+\begin{itemize}
+  \item J. Schmidhuber, "Evolutionary principles in self-referential learning", On Learning Algorithms and Neural Networks, 1987.
+  \item OpenAI, "GPT-4 Technical Report", 2023.
+  \item Groq Inc., "Groq API Documentation", \url{https://groq.com/}
+  \item Google, "Gemini API Documentation", \url{https://ai.google.dev/}
+  \item scikit-learn: Machine Learning in Python, \url{https://scikit-learn.org/}
+\end{itemize}
+
+\end{document}

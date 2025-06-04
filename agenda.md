@@ -1194,3 +1194,14 @@ if __name__ == "__main__":
 特に、`agent.py` で実行されるパイプラインコードと、LLMがそれを生成・改善する際の規約（どの関数名を使うか、どのような入出力を期待するかなど）を明確に定義し、LLMへのプロンプトでそれを正確に伝えることが重要です。
 
 この雛形を元に、具体的な機能を追加していくことで、DGMのコンセプトを一般的な機械学習タスクに応用するプログラムを構築できるでしょう。
+
+curl https://api.groq.com/openai/v1/chat/completions -s \
+-H "Content-Type: application/json" \
+-H "Authorization: $GEOQ_API_KEY" \
+-d '{
+"model": "qwen-qwq-32b",
+"messages": [{
+    "role": "user",
+    "content": "Explain the importance of fast language models"
+}]
+}'

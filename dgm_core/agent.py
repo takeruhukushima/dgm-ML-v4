@@ -17,7 +17,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
-from .llm_utils import generate_improvement_suggestion, parse_llm_suggestion
+from .llm_utils import generate_improvement_suggestion, extract_suggestion_from_llm_output
 
 if TYPE_CHECKING:
     from .archive import PipelineArchive
@@ -346,20 +346,27 @@ class MachineLearningPipelineAgent:
             )
 
             # 改善案のパース
-            parsed = parse_llm_suggestion(suggestion)
-            if not parsed or not parsed.get('improved_code'):
-                logger.warning(f"Agent {self.agent_id}: No valid improvement generated")
+            code = suggestion['code'] if isinstance(suggestion, dict) and 'code' in suggestion else ''
+            # フォールバック: codeが空ならraw_responseやsuggestionキーから抜き出しを試みる
+            if (not code or not isinstance(code, str)) and isinstance(suggestion, dict):
+                raw = suggestion.get('raw_response') or suggestion.get('suggestion') or ''
+                from .llm_utils import extract_suggestion_from_llm_output
+                fallback_code = extract_suggestion_from_llm_output(raw)
+                if fallback_code:
+                    code = fallback_code
+            if not code or not isinstance(code, str):
+                logger.warning("LLMから有効な改善コードが取得できませんでした。")
                 return None
 
             # 新しいエージェントを生成
             new_agent = MachineLearningPipelineAgent(
-                pipeline_code=parsed['improved_code'],
+                pipeline_code=code,
                 generation=self.generation + 1,
                 parent_id=self.agent_id
             )
 
             logger.info(f"Generated improvement for generation {self.generation + 1}")
-            logger.debug(f"Improvement description: {parsed.get('improvement_description', 'No description')}")
+            logger.debug(f"Improvement code: {code[:200]} ...")
 
             return new_agent
 

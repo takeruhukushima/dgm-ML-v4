@@ -66,17 +66,38 @@ dgm-ml-v4/
    pip install -r requirements.txt
    ```
 
-4. Gemini APIの設定手順を追加します:
-   - Gemini APIキーを取得します
-   - 環境変数としてAPIキーを設定します:
-     ```bash
-     # Linux/Mac
-     echo 'export GEMINI_API_KEY="your-api-key-here"' >> ~/.zshrc  # or ~/.bashrc
-     source ~/.zshrc  # or ~/.bashrc
-     
-     # Windows (PowerShell)
-     [System.Environment]::SetEnvironmentVariable('GEMINI_API_KEY', 'your-api-key-here', 'User')
-     ```
+4. LLM API（GeminiまたはGroq）設定手順:
+    - **Gemini APIの場合**:
+      - Gemini APIキーを取得します
+      - 環境変数としてAPIキーを設定します:
+        ```bash
+        # Linux/Mac
+        echo 'export GEMINI_API_KEY="your-gemini-api-key"' >> ~/.zshrc  # or ~/.bashrc
+        source ~/.zshrc  # or ~/.bashrc
+        # Windows (PowerShell)
+        [System.Environment]::SetEnvironmentVariable('GEMINI_API_KEY', 'your-gemini-api-key', 'User')
+        ```
+    - **Groq APIの場合（推奨: Llama-3/4モデル対応）**:
+      - [Groq Cloud](https://console.groq.com/) でAPIキーを取得します
+      - 環境変数としてAPIキーを設定します:
+        ```bash
+        # Linux/Mac
+        echo 'export GROQ_API_KEY="your-groq-api-key"' >> ~/.zshrc  # or ~/.bashrc
+        source ~/.zshrc  # or ~/.bashrc
+        # Windows (PowerShell)
+        [System.Environment]::SetEnvironmentVariable('GROQ_API_KEY', 'your-groq-api-key', 'User')
+        ```
+      - configファイル（例: `config/global_config.yaml`）のllmセクションで `provider: groq` とし、`model_name` を `meta-llama/llama-4-scout-17b-16e-instruct` などGroq対応モデル名に設定してください。
+      - 例:
+        ```yaml
+        llm:
+          provider: groq
+          model_name: meta-llama/llama-4-scout-17b-16e-instruct
+          temperature: 0.4
+          max_tokens: 2048
+        ```
+      - 詳細は [Groq公式ドキュメント](https://console.groq.com/docs) を参照してください。
+    - **注意:** GroqとGeminiはどちらもサポートされていますが、Groq（Llama系）は日本語指示やコード生成時に高速・高精度な傾向があります。
 
 5. 設定ファイルを確認します:
    - `config/global_config.yaml` の `llm` セクションが正しく設定されていることを確認してください

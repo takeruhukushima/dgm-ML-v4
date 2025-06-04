@@ -1,0 +1,85 @@
+# DGM戦略設定
+llm:
+  llm_provider: "groq"  # 使用するLLMプロバイダー (groq, gemini など)
+  llm_model: "meta-llama/llama-4-scout-17b-16e-instruct"  # 使用するモデル
+  temperature: 0.7  # 生成のランダム性 (0.0 - 1.0)
+  max_tokens: 4096  # 最大トークン数
+  top_p: 0.95  # トークン選択の確率閾値
+  frequency_penalty: 0.0  # 頻出単語のペナルティ
+  presence_penalty: 0.0  # 新規単語のペナルティ
+
+# 生成関連のパラメータ
+temperature: 0.7
+max_tokens: 2048
+top_p: 1.0
+frequency_penalty: 0.0
+presence_penalty: 0.0
+
+# DGMの進化パラメータ
+population_size: 5
+elitism: 1  # 次世代に直接引き継ぐエリートの数
+mutation_rate: 0.2
+crossover_rate: 0.8
+max_generations: 10
+
+# 評価メトリクス
+evaluation_metrics:
+  - "accuracy"
+  - "f1_score"
+  - "precision"
+  - "recall"
+  - "roc_auc"
+
+# タスク固有のヒント
+task_specific_hints: |
+  このモデルはGroqのQwen-32Bモデルを使用しています。
+  高速な推論が可能で、長いコンテキストを扱うことができます。
+  コード生成やテキスト生成タスクに適しています。
+
+# 初期プロンプトテンプレート
+initial_prompt_template: |
+  あなたは熟練したデータサイエンティストです。
+  以下の機械学習タスクを解決するためのPythonパイプラインを生成してください。
+  
+  タスク: {task_description}
+  ターゲット変数: {target_variable}
+  使用可能な特徴量: {feature_columns}
+  
+  以下の点に注意してコードを生成してください:
+  1. データの前処理（欠損値処理、エンコーディングなど）
+  2. 特徴量エンジニアリング
+  3. モデルの定義と学習
+  4. 評価指標の計算
+  
+  コードは完全で実行可能なものにしてください。
+  
+  # パイプラインコード
+  ```python
+  {pipeline_code_placeholder}
+  ```
+
+# 改善プロンプトテンプレート
+improvement_prompt_template: |
+  以下の機械学習パイプラインを改善してください。
+  
+  タスク: {task_description}
+  ターゲット変数: {target_variable}
+  現在のパフォーマンス: {current_performance}
+  
+  現在のパイプラインコード:
+  ```python
+  {current_pipeline_code}
+  ```
+  
+  以下の点を考慮して改善してください:
+  1. パフォーマンスの向上
+  2. コードの効率化
+  3. 新しい特徴量の追加
+  4. ハイパーパラメータの最適化
+  
+  改善案と共に、変更点の説明もお願いします。
+  
+  改善後のコード:
+  ```python
+  {improved_pipeline_code_placeholder}
+  ```

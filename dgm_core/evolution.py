@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 import pandas as pd
 from .agent import MachineLearningPipelineAgent
-from .llm_utils import generate_improvement_suggestion, parse_llm_suggestion
+from .llm_utils import generate_improvement_suggestion
 from .archive import PipelineArchive
 from .templates import generate_initial_pipeline
 
@@ -111,6 +111,10 @@ class DGMEvolution:
         while len(new_population) < self.evolution_config.get('population_size', 3):
             # ランダムに親を選択
             parent = self._select_parent()
+            
+            # 親個体をアーカイブに保存（performance_metrics付きで）
+            if hasattr(parent, 'performance_metrics') and parent.performance_metrics:
+                self.archive.add_agent(parent, parent.performance_metrics)
             
             # 親から新しい個体を生成
             child = self._generate_improved_agent(parent)

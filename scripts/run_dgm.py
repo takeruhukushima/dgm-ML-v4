@@ -15,6 +15,15 @@ import pandas as pd
 import yaml
 from datetime import datetime
 
+# Add the project root to sys.path to allow importing dgm_core
+# This is necessary because the script is in a subdirectory (scripts/)
+# and needs to access modules in the parent directory.
+_current_file_path = os.path.abspath(__file__)
+_scripts_dir = os.path.dirname(_current_file_path)
+_project_root = os.path.abspath(os.path.join(_scripts_dir, '..'))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from dgm_core import (
     MachineLearningPipelineAgent,
     PipelineArchive,
@@ -203,6 +212,16 @@ def main():
                     logger.info(f"Final results saved to: {results_file}")
                 else:
                     logger.warning("No successful pipeline was generated or no metrics were calculated.")
+            
+            # テストデータがあれば予測を実行し、latest_predictionsをセット
+            if test_data is not None and best_agent is not None:
+                best_agent.latest_predictions = best_agent.predict(test_data)
+
+            # 予測結果の保存（latest_predictions属性があれば）
+            if hasattr(best_agent, 'latest_predictions') and best_agent.latest_predictions is not None:
+                prediction_path = run_dir / 'results' / 'prediction.csv'
+                best_agent.latest_predictions.to_csv(prediction_path, index=True)
+                logger.info(f"Prediction results saved to: {prediction_path}")
             
             logger.info("DGM evolution completed successfully!")
             return 0
